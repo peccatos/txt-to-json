@@ -1,3 +1,15 @@
+Это три подкоманды CLI:
+
+`compile <path>` - читает `.eva` и пишет результат в `./вывод.json`
+`validate <path>` - только проверяет вход, ничего не пишет
+`print-ast <path>` - печатает AST в JSON в stdout
+
+Примеры:
+
+`cargo run -- compile .\example.eva`
+`cargo run -- validate .\example.eva`
+`cargo run -- print-ast .\example.eva`
+
 # txt-to-json
 
 Bilingual README. English first, then Russian.
