@@ -1,0 +1,8 @@
+section: meta
+contract: calibration
+
+section: mystery
+value: x
+
+section: formula
+confidence = score

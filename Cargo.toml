@@ -2,6 +2,12 @@
 name = "txt-to-json"
 version = "0.1.0"
 edition = "2021"
+description = "Strict EVA-style DSL compiler that produces deterministic JSON contracts"
+readme = "README.md"
+repository = "https://github.com/peccatos/txt-to-json"
+homepage = "https://github.com/peccatos/txt-to-json"
+keywords = ["cli", "compiler", "dsl", "json"]
+categories = ["command-line-utilities", "parsing"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

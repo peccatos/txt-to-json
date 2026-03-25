@@ -163,7 +163,12 @@ fn invalid_formula(line_no: usize, column: Option<usize>) -> CompileError {
 }
 
 fn invalid_invariant(line_no: usize, column: Option<usize>) -> CompileError {
-    CompileError::new(ErrorKind::InvalidInvariant, "invalid range", line_no, column)
+    CompileError::new(
+        ErrorKind::InvalidInvariant,
+        "invalid range",
+        line_no,
+        column,
+    )
 }
 
 fn parse_number_literal(

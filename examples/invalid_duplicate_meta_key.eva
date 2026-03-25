@@ -1,0 +1,6 @@
+section: meta
+contract: calibration
+contract: other
+
+section: formula
+confidence = score

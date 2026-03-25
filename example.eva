@@ -1,0 +1,12 @@
+section: meta
+contract: calibration
+version: v1
+
+section: formula
+confidence = confidence * (1 - prediction_error)
+
+section: invariant
+confidence in [0,1]
+
+section: pipeline
+op confidence_update

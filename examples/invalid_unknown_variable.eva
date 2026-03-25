@@ -1,0 +1,5 @@
+section: meta
+contract: calibration
+
+section: formula
+confidence = hidden_signal
