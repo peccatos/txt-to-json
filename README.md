@@ -1,65 +1,65 @@
 # txt-to-json
 
-`txt-to-json` - строгий Rust CLI-компилятор для EVA-подобного DSL.
+Bilingual README. English first, then Russian.
 
-Он читает текстовый файл, проверяет его по жёсткой схеме и либо:
+## English
 
-- собирает JSON-контракт;
-- только валидирует вход;
-- печатает AST в JSON.
+`txt-to-json` is a strict Rust CLI compiler for an EVA-style DSL.
 
-## Возможности
+It parses a plain-text input file, validates it against a fixed contract, and produces a deterministic JSON result.
 
-- детерминированный результат для одинакового входа;
-- fail-fast на любой ошибке синтаксиса или валидации;
-- без неявных допущений и без "исправления" входа;
-- структурированные ошибки в JSON;
-- вывод `compile` всегда пишется в `./вывод.json` в текущем рабочем каталоге.
+### Features
 
-## Установка
+- deterministic output for identical input;
+- fail-fast behavior on invalid syntax or validation errors;
+- structured JSON errors on stderr;
+- no implicit assumptions or silent corrections;
+- `compile` writes the result to `./вывод.json` in the current working directory.
+
+### Installation
 
 ```bash
 cargo build
 ```
 
-## CLI
+### CLI
 
-### Compile
+#### Compile
 
-Компилирует DSL-файл в JSON-контракт и пишет результат в `./вывод.json`.
+Compiles a DSL file into a JSON contract and writes it to `./вывод.json`.
 
 ```bash
 cargo run -- compile example.eva
 ```
 
-### Validate
+#### Validate
 
-Проверяет файл, но ничего не пишет на диск.
+Parses and validates the input without writing any files.
 
 ```bash
 cargo run -- validate example.eva
 ```
 
-### Print AST
+#### Print AST
 
-Печатает разобранный AST в детерминированном JSON-формате.
+Prints the parsed AST as deterministic JSON.
 
 ```bash
 cargo run -- print-ast example.eva
 ```
 
-## Формат DSL
+### DSL Format
 
-Файл состоит из секций. Секция начинается строкой `section: IDENT`, после чего идут строки содержимого до следующего заголовка секции.
+Each file is split into sections. A section starts with `section: IDENT` and continues until the next section header or end of file.
 
-Поддерживаются только:
+Supported sections:
 
 - `meta`
 - `formula`
 - `invariant`
 - `pipeline`
 
-### Секция `meta`
+#### `meta`
 
 ```text
 section: meta
@@ -67,72 +67,72 @@ contract: calibration
 version: v1
 ```
 
-Формат строки:
+Line format:
 
 ```text
 IDENT: IDENT
 ```
 
-### Секция `formula`
+#### `formula`
 
 ```text
 section: formula
 confidence = confidence * (1 - prediction_error)
 ```
 
-Формат строки:
+Line format:
 
 ```text
 IDENT = EXPR
 ```
 
-Поддерживаемые выражения:
+Supported expressions:
 
-- числа;
-- переменные;
-- операции `+`, `-`, `*`, `/`;
-- круглые скобки.
+- numbers;
+- variables;
+- binary operators `+`, `-`, `*`, `/`;
+- parentheses.
 
-### Секция `invariant`
+#### `invariant`
 
 ```text
 section: invariant
 confidence in [0,1]
 ```
 
-Формат строки:
+Line format:
 
 ```text
 IDENT in [NUMBER, NUMBER]
 ```
 
-### Секция `pipeline`
+#### `pipeline`
 
 ```text
 section: pipeline
 op confidence_update
 ```
 
-Формат строки:
+Line format:
 
 ```text
 op IDENT
 ```
 
-## Правила валидации
+### Validation Rules
 
-- секция `meta` обязательна;
-- секция `formula` обязательна;
-- секция `pipeline` обязательна;
-- должна быть хотя бы одна формула;
-- неизвестные секции запрещены;
-- дубли секций запрещены;
-- дубли ключей в `meta` запрещены;
-- переменные в формулах и инвариантах должны быть из разрешённого списка;
-- операции в `pipeline` должны быть из зарегистрированного списка;
-- `min` в инварианте должен быть меньше или равен `max`.
+- the `meta` section is required;
+- the `formula` section is required;
+- the `pipeline` section is required;
+- at least one formula must exist;
+- unknown sections are rejected;
+- duplicate sections are rejected;
+- duplicate keys in `meta` are rejected;
+- variables in formulas and invariants must be in the allowed list;
+- pipeline operations must be in the registered list;
+- each invariant must satisfy `min <= max`.
 
-### Разрешённые переменные
+#### Allowed Variables
 
 - `confidence`
 - `prediction_error`
@@ -143,7 +143,7 @@ op IDENT
 - `reward_weight`
 - `risk_weight`
 
-### Разрешённые операции
+#### Allowed Operations
 
 - `update_ema_error`
 - `update_beliefs`
@@ -151,11 +151,11 @@ op IDENT
 - `expected_value`
 - `selection_score`
 
-## Формат ошибок
+### Error Format
 
-При ошибке CLI печатает JSON в stderr.
+On failure, the CLI prints structured JSON to stderr.
 
-Пример:
+Example:
 
 ```json
 {
@@ -166,16 +166,16 @@ op IDENT
 }
 ```
 
-Поля:
+Fields:
 
 - `kind`
 - `message`
 - `line`
-- `column` - опционально
+- `column` is optional
 
-## Пример
+### Example
 
-Вход:
+Input:
 
 ```text
 section: meta
@@ -192,13 +192,13 @@ section: pipeline
 op confidence_update
 ```
 
-Команда:
+Command:
 
 ```bash
 cargo run -- compile example.eva
 ```
 
-Результат будет записан в `./вывод.json`:
+Output written to `./вывод.json`:
 
 ```json
 {
@@ -225,18 +225,257 @@ cargo run -- compile example.eva
 }
 ```
 
-## Разработка
+### Development
 
 ```bash
 cargo test
 ```
 
-## Структура проекта
+### Project Layout
 
-- `src/main.rs` - CLI и файловый ввод/вывод;
+- `src/main.rs` - CLI entry point and file I/O;
+- `src/parser.rs` - section and line parsing;
+- `src/lexer.rs` - expression lexer and parser;
+- `src/ast.rs` - AST and contract models;
+- `src/validator.rs` - strict validation rules;
+- `src/builder.rs` - final JSON contract builder;
+- `src/error.rs` - typed error model.
+
+## Русский
+
+`txt-to-json` - строгий Rust CLI-компилятор для DSL в стиле EVA.
+
+Он читает текстовый файл, проверяет его по фиксированному контракту и выдаёт детерминированный JSON.
+
+### Возможности
+
+- детерминированный результат для одинакового входа;
+- fail-fast при ошибках синтаксиса или валидации;
+- структурированные JSON-ошибки в stderr;
+- никаких неявных допущений и "исправлений" входа;
+- `compile` пишет результат в `./вывод.json` в текущем рабочем каталоге.
+
+### Установка
+
+```bash
+cargo build
+```
+
+### CLI
+
+#### Compile
+
+Компилирует DSL-файл в JSON-контракт и пишет его в `./вывод.json`.
+
+```bash
+cargo run -- compile example.eva
+```
+
+#### Validate
+
+Парсит и валидирует вход, не создавая файлов.
+
+```bash
+cargo run -- validate example.eva
+```
+
+#### Print AST
+
+Печатает AST в детерминированном JSON-формате.
+
+```bash
+cargo run -- print-ast example.eva
+```
+
+### Формат DSL
+
+Каждый файл разбивается на секции. Секция начинается строкой `section: IDENT` и продолжается до следующего заголовка секции или конца файла.
+
+Поддерживаются только секции:
+
+- `meta`
+- `formula`
+- `invariant`
+- `pipeline`
+
+#### `meta`
+
+```text
+section: meta
+contract: calibration
+version: v1
+```
+
+Формат строки:
+
+```text
+IDENT: IDENT
+```
+
+#### `formula`
+
+```text
+section: formula
+confidence = confidence * (1 - prediction_error)
+```
+
+Формат строки:
+
+```text
+IDENT = EXPR
+```
+
+Поддерживаемые выражения:
+
+- числа;
+- переменные;
+- бинарные операторы `+`, `-`, `*`, `/`;
+- круглые скобки.
+
+#### `invariant`
+
+```text
+section: invariant
+confidence in [0,1]
+```
+
+Формат строки:
+
+```text
+IDENT in [NUMBER, NUMBER]
+```
+
+#### `pipeline`
+
+```text
+section: pipeline
+op confidence_update
+```
+
+Формат строки:
+
+```text
+op IDENT
+```
+
+### Правила валидации
+
+- секция `meta` обязательна;
+- секция `formula` обязательна;
+- секция `pipeline` обязательна;
+- должна быть хотя бы одна формула;
+- неизвестные секции запрещены;
+- дубли секций запрещены;
+- дубли ключей в `meta` запрещены;
+- переменные в формулах и инвариантах должны быть из разрешённого списка;
+- операции в `pipeline` должны быть из зарегистрированного списка;
+- каждый инвариант должен удовлетворять `min <= max`.
+
+#### Разрешённые переменные
+
+- `confidence`
+- `prediction_error`
+- `score`
+- `risk`
+- `probability`
+- `expected_value`
+- `reward_weight`
+- `risk_weight`
+
+#### Разрешённые операции
+
+- `update_ema_error`
+- `update_beliefs`
+- `confidence_update`
+- `expected_value`
+- `selection_score`
+
+### Формат ошибок
+
+При ошибке CLI печатает структурированный JSON в stderr.
+
+Пример:
+
+```json
+{
+  "kind": "UnknownVariable",
+  "message": "variable not allowed: hidden_signal",
+  "line": 6,
+  "column": 1
+}
+```
+
+Поля:
+
+- `kind`
+- `message`
+- `line`
+- `column` - опционально
+
+### Пример
+
+Вход:
+
+```text
+section: meta
+contract: calibration
+version: v1
+
+section: formula
+confidence = confidence * (1 - prediction_error)
+
+section: invariant
+confidence in [0,1]
+
+section: pipeline
+op confidence_update
+```
+
+Команда:
+
+```bash
+cargo run -- compile example.eva
+```
+
+Вывод записывается в `./вывод.json`:
+
+```json
+{
+  "meta": {
+    "contract": "calibration",
+    "version": "v1"
+  },
+  "formulas": [
+    {
+      "lhs": "confidence",
+      "rhs": "confidence * (1 - prediction_error)"
+    }
+  ],
+  "invariants": [
+    {
+      "field": "confidence",
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "pipeline": [
+    "confidence_update"
+  ]
+}
+```
+
+### Разработка
+
+```bash
+cargo test
+```
+
+### Структура проекта
+
+- `src/main.rs` - точка входа CLI и файловый ввод/вывод;
 - `src/parser.rs` - разбор секций и строк;
 - `src/lexer.rs` - лексер и парсер выражений;
-- `src/ast.rs` - AST и модель контракта;
-- `src/validator.rs` - строгая проверка правил;
-- `src/builder.rs` - сборка финального JSON-контракта;
-- `src/error.rs` - типизированные ошибки.
+- `src/ast.rs` - AST и модели контракта;
+- `src/validator.rs` - строгие правила валидации;
+- `src/builder.rs` - сборщик итогового JSON-контракта;
+- `src/error.rs` - типизированная модель ошибок.
