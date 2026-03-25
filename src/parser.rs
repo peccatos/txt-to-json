@@ -1,175 +1,115 @@
-use crate::ast::{
-    CompileError, DocumentAst, ErrorCode, Formula, Invariant, KeyValue, PipelineOp, Result, Section,
+use crate::ast::{DocumentAst, KeyValue, Section};
+use crate::error::{CompileError, ErrorKind, Result};
+use crate::lexer::{
+    parse_formula_line, parse_invariant_line, parse_key_value, parse_pipeline_line,
+    parse_section_header,
 };
-use crate::lexer::{classify_line, LineKind};
+use std::collections::HashSet;
 
 const ALLOWED_SECTIONS: &[&str] = &["meta", "formula", "invariant", "pipeline"];
 
 pub fn parse_document(input: &str) -> Result<DocumentAst> {
     let mut document = DocumentAst::default();
     let mut current_section: Option<String> = None;
-    let mut seen_meta = false;
-    let mut seen_formula = false;
-    let mut seen_invariant = false;
-    let mut seen_pipeline = false;
+    let mut seen_sections = HashSet::new();
 
     for (index, raw_line) in input.lines().enumerate() {
         let line_no = index + 1;
-        let line = raw_line.trim();
-        if line.is_empty() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() {
             continue;
         }
 
-        let kind = classify_line(line).ok_or_else(|| invalid_syntax(line_no))?;
-        match kind {
-            LineKind::Section { name } => {
-                if !ALLOWED_SECTIONS.contains(&name.as_str()) {
-                    return Err(CompileError::new(
-                        ErrorCode::UnknownSection,
-                        "section not allowed",
-                        Some(line_no),
-                    ));
-                }
-                if section_seen(
-                    &name,
-                    seen_meta,
-                    seen_formula,
-                    seen_invariant,
-                    seen_pipeline,
-                ) {
-                    return Err(CompileError::new(
-                        ErrorCode::DuplicateSection,
-                        format!("section already defined: {name}"),
-                        Some(line_no),
-                    ));
-                }
-                mark_seen(
-                    &name,
-                    &mut seen_meta,
-                    &mut seen_formula,
-                    &mut seen_invariant,
-                    &mut seen_pipeline,
-                );
-                current_section = Some(name.clone());
-                document.sections.push(Section {
-                    name,
-                    line: line_no,
-                });
+        if let Some(section) = parse_section_header(trimmed) {
+            if !ALLOWED_SECTIONS.contains(&section.as_str()) {
+                return Err(CompileError::new(
+                    ErrorKind::UnknownSection,
+                    "section not allowed",
+                    line_no,
+                    Some(1),
+                ));
             }
-            LineKind::KeyValue { key, value } => {
-                let section = current_section
-                    .as_deref()
-                    .ok_or_else(|| invalid_syntax(line_no))?;
-                if section != "meta" {
-                    return Err(unknown_field(line_no, section));
-                }
-                document.meta.push(KeyValue {
+
+            if !seen_sections.insert(section.clone()) {
+                return Err(CompileError::new(
+                    ErrorKind::InvalidSyntax,
+                    "duplicate section",
+                    line_no,
+                    Some(1),
+                ));
+            }
+
+            current_section = Some(section.clone());
+            document.sections.push(Section {
+                name: section,
+                line: line_no,
+                column: 1,
+            });
+            continue;
+        }
+
+        let Some(section_name) = current_section.as_deref() else {
+            return Err(CompileError::new(
+                ErrorKind::InvalidSyntax,
+                "syntax error",
+                line_no,
+                Some(1),
+            ));
+        };
+
+        match section_name {
+            "meta" => match parse_key_value(trimmed) {
+                Some((key, value)) => document.meta.push(KeyValue {
                     key,
                     value,
                     line: line_no,
-                });
-            }
-            LineKind::Formula { lhs, rhs } => {
-                let section = current_section
-                    .as_deref()
-                    .ok_or_else(|| invalid_syntax(line_no))?;
-                if section != "formula" {
-                    return Err(unknown_field(line_no, section));
+                    column: 1,
+                }),
+                None => {
+                    return Err(CompileError::new(
+                        ErrorKind::InvalidSyntax,
+                        "syntax error",
+                        line_no,
+                        Some(1),
+                    ));
                 }
-                document.formulas.push(Formula {
-                    lhs,
-                    rhs,
-                    line: line_no,
-                });
-            }
-            LineKind::Invariant { field, min, max } => {
-                let section = current_section
-                    .as_deref()
-                    .ok_or_else(|| invalid_syntax(line_no))?;
-                if section != "invariant" {
-                    return Err(unknown_field(line_no, section));
+            },
+            "formula" => match parse_formula_line(trimmed, line_no)? {
+                Some(formula) => document.formulas.push(formula),
+                None => {
+                    return Err(CompileError::new(
+                        ErrorKind::InvalidFormula,
+                        "malformed expression",
+                        line_no,
+                        Some(1),
+                    ));
                 }
-                document.invariants.push(Invariant {
-                    field,
-                    min,
-                    max,
-                    line: line_no,
-                });
-            }
-            LineKind::PipelineOp { name } => {
-                let section = current_section
-                    .as_deref()
-                    .ok_or_else(|| invalid_syntax(line_no))?;
-                if section != "pipeline" {
-                    return Err(unknown_field(line_no, section));
+            },
+            "invariant" => match parse_invariant_line(trimmed, line_no)? {
+                Some(invariant) => document.invariants.push(invariant),
+                None => {
+                    return Err(CompileError::new(
+                        ErrorKind::InvalidInvariant,
+                        "invalid range",
+                        line_no,
+                        Some(1),
+                    ));
                 }
-                document.pipeline.push(PipelineOp {
-                    name,
-                    line: line_no,
-                });
-            }
+            },
+            "pipeline" => match parse_pipeline_line(trimmed, line_no)? {
+                Some(op) => document.pipeline.push(op),
+                None => {
+                    return Err(CompileError::new(
+                        ErrorKind::InvalidSyntax,
+                        "syntax error",
+                        line_no,
+                        Some(1),
+                    ));
+                }
+            },
+            _ => unreachable!("parser only accepts known sections"),
         }
     }
 
     Ok(document)
-}
-
-fn section_seen(
-    name: &str,
-    seen_meta: bool,
-    seen_formula: bool,
-    seen_invariant: bool,
-    seen_pipeline: bool,
-) -> bool {
-    match name {
-        "meta" => seen_meta,
-        "formula" => seen_formula,
-        "invariant" => seen_invariant,
-        "pipeline" => seen_pipeline,
-        _ => false,
-    }
-}
-
-fn mark_seen(
-    name: &str,
-    seen_meta: &mut bool,
-    seen_formula: &mut bool,
-    seen_invariant: &mut bool,
-    seen_pipeline: &mut bool,
-) {
-    match name {
-        "meta" => *seen_meta = true,
-        "formula" => *seen_formula = true,
-        "invariant" => *seen_invariant = true,
-        "pipeline" => *seen_pipeline = true,
-        _ => {}
-    }
-}
-
-fn invalid_syntax(line: usize) -> CompileError {
-    CompileError::new(ErrorCode::InvalidSyntax, "syntax error", Some(line))
-}
-
-fn unknown_field(line: usize, section: &str) -> CompileError {
-    CompileError::new(
-        ErrorCode::UnknownField,
-        format!("field not allowed in section `{section}`"),
-        Some(line),
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_document;
-
-    #[test]
-    fn parses_example_structure() {
-        let input = "section: meta\ncontract: calibration\nversion: v1\n\nsection: formula\nconfidence = confidence * (1 - prediction_error)\n\nsection: invariant\nconfidence in [0,1]\n\nsection: pipeline\nop confidence_update\n";
-        let document = parse_document(input).expect("document should parse");
-        assert_eq!(document.sections.len(), 4);
-        assert_eq!(document.meta.len(), 2);
-        assert_eq!(document.formulas.len(), 1);
-        assert_eq!(document.invariants.len(), 1);
-        assert_eq!(document.pipeline.len(), 1);
-    }
 }

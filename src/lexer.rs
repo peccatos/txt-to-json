@@ -1,28 +1,6 @@
-use crate::ast::{CompileError, ErrorCode, Result};
+use crate::ast::{BinaryOperator, Expr, Formula, Invariant, PipelineOp};
+use crate::error::{CompileError, ErrorKind, Result};
 use serde_json::Number;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LineKind {
-    Section {
-        name: String,
-    },
-    KeyValue {
-        key: String,
-        value: String,
-    },
-    Formula {
-        lhs: String,
-        rhs: String,
-    },
-    Invariant {
-        field: String,
-        min: String,
-        max: String,
-    },
-    PipelineOp {
-        name: String,
-    },
-}
 
 pub fn is_ident_start(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphabetic()
@@ -40,62 +18,163 @@ pub fn is_identifier(text: &str) -> bool {
     }
 }
 
-pub fn classify_line(line: &str) -> Option<LineKind> {
+pub fn parse_section_header(line: &str) -> Option<String> {
     let trimmed = line.trim();
-    if trimmed.is_empty() {
+    let (left, right) = trimmed.split_once(':')?;
+    if left.trim() != "section" {
         return None;
     }
 
-    if let Some(name) = parse_section_header(trimmed) {
-        return Some(LineKind::Section { name });
+    let name = right.trim();
+    if !is_identifier(name) {
+        return None;
     }
 
-    if let Some((lhs, rhs)) = parse_formula(trimmed) {
-        return Some(LineKind::Formula { lhs, rhs });
-    }
-
-    if let Some((field, min, max)) = parse_invariant(trimmed) {
-        return Some(LineKind::Invariant { field, min, max });
-    }
-
-    if let Some(name) = parse_pipeline(trimmed) {
-        return Some(LineKind::PipelineOp { name });
-    }
-
-    if let Some((key, value)) = parse_key_value(trimmed) {
-        return Some(LineKind::KeyValue { key, value });
-    }
-
-    None
+    Some(name.to_string())
 }
 
-pub fn validate_expression(expr: &str, line: usize, allowed_variables: &[&str]) -> Result<()> {
-    let tokens = lex_expression(expr, line)?;
+pub fn parse_key_value(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim();
+    let (key, value) = trimmed.split_once(':')?;
+    let key = key.trim();
+    let value = value.trim();
+
+    if !is_identifier(key) || !is_identifier(value) {
+        return None;
+    }
+
+    Some((key.to_string(), value.to_string()))
+}
+
+pub fn parse_pipeline_line(line: &str, line_no: usize) -> Result<Option<PipelineOp>> {
+    let trimmed = line.trim();
+    let mut parts = trimmed.split_whitespace();
+
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some("op"), Some(name), None) if is_identifier(name) => Ok(Some(PipelineOp {
+            name: name.to_string(),
+            line: line_no,
+            column: 1,
+        })),
+        _ => Ok(None),
+    }
+}
+
+pub fn parse_formula_line(line: &str, line_no: usize) -> Result<Option<Formula>> {
+    let trimmed = line.trim();
+    let Some((lhs_raw, rhs_raw)) = trimmed.split_once('=') else {
+        return Ok(None);
+    };
+
+    let lhs = lhs_raw.trim();
+    let rhs = rhs_raw.trim();
+    if !is_identifier(lhs) || rhs.is_empty() {
+        return Ok(None);
+    }
+
+    let expr = parse_expression(rhs, line_no, 1)?;
+    Ok(Some(Formula {
+        lhs: lhs.to_string(),
+        rhs: expr,
+        line: line_no,
+        column: 1,
+    }))
+}
+
+pub fn parse_invariant_line(line: &str, line_no: usize) -> Result<Option<Invariant>> {
+    let trimmed = line.trim();
+    let mut cursor = 0usize;
+    let Some(field) = take_identifier(trimmed, &mut cursor) else {
+        return Ok(None);
+    };
+
+    skip_ws(trimmed, &mut cursor);
+    if !consume_word(trimmed, &mut cursor, "in") {
+        return Ok(None);
+    }
+    skip_ws(trimmed, &mut cursor);
+    if !consume_char(trimmed, &mut cursor, '[') {
+        return Ok(None);
+    }
+    skip_ws(trimmed, &mut cursor);
+
+    let min_start = cursor + 1;
+    let min_text = take_number_literal(trimmed, &mut cursor)
+        .ok_or_else(|| invalid_invariant(line_no, Some(min_start)))?;
+    let min = parse_number_literal(&min_text, line_no, min_start, ErrorKind::InvalidInvariant)?;
+
+    skip_ws(trimmed, &mut cursor);
+    if !consume_char(trimmed, &mut cursor, ',') {
+        return Err(invalid_invariant(line_no, Some(cursor + 1)));
+    }
+    skip_ws(trimmed, &mut cursor);
+
+    let max_start = cursor + 1;
+    let max_text = take_number_literal(trimmed, &mut cursor)
+        .ok_or_else(|| invalid_invariant(line_no, Some(max_start)))?;
+    let max = parse_number_literal(&max_text, line_no, max_start, ErrorKind::InvalidInvariant)?;
+
+    skip_ws(trimmed, &mut cursor);
+    if !consume_char(trimmed, &mut cursor, ']') {
+        return Err(invalid_invariant(line_no, Some(cursor + 1)));
+    }
+    skip_ws(trimmed, &mut cursor);
+
+    if cursor != trimmed.len() {
+        return Err(invalid_invariant(line_no, Some(cursor + 1)));
+    }
+
+    Ok(Some(Invariant {
+        field,
+        min,
+        max,
+        line: line_no,
+        column: 1,
+    }))
+}
+
+pub fn parse_expression(text: &str, line_no: usize, start_column: usize) -> Result<Expr> {
+    let tokens = lex_expression(text, line_no, start_column)?;
     let mut parser = ExprParser {
         tokens: &tokens,
         pos: 0,
-        line,
-        allowed_variables,
+        line_no,
     };
-    parser.parse_additive()?;
+    let expr = parser.parse_additive()?;
+
     if parser.pos != tokens.len() {
-        return Err(CompileError::new(
-            ErrorCode::InvalidFormula,
-            "malformed expression",
-            Some(line),
-        ));
+        let column = tokens
+            .get(parser.pos)
+            .map(|token| token.column)
+            .unwrap_or(start_column);
+        return Err(invalid_formula(line_no, Some(column)));
     }
-    Ok(())
+
+    Ok(expr)
 }
 
-pub fn parse_number_literal(raw: &str, line: usize) -> Result<Number> {
-    let trimmed = raw.trim();
-    if !is_number_syntax(trimmed) {
-        return Err(CompileError::new(
-            ErrorCode::InvalidInvariant,
-            "invalid range",
-            Some(line),
-        ));
+fn invalid_formula(line_no: usize, column: Option<usize>) -> CompileError {
+    CompileError::new(
+        ErrorKind::InvalidFormula,
+        "malformed expression",
+        line_no,
+        column,
+    )
+}
+
+fn invalid_invariant(line_no: usize, column: Option<usize>) -> CompileError {
+    CompileError::new(ErrorKind::InvalidInvariant, "invalid range", line_no, column)
+}
+
+fn parse_number_literal(
+    text: &str,
+    line_no: usize,
+    column: usize,
+    kind: ErrorKind,
+) -> Result<Number> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(number_error(kind, line_no, column));
     }
 
     let normalized = trimmed.strip_prefix('+').unwrap_or(trimmed);
@@ -106,90 +185,232 @@ pub fn parse_number_literal(raw: &str, line: usize) -> Result<Number> {
         if let Ok(value) = normalized.parse::<i64>() {
             return Ok(Number::from(value));
         }
+
+        if let Ok(value) = normalized.parse::<u64>() {
+            return Ok(Number::from(value));
+        }
     }
 
     let value = normalized
         .parse::<f64>()
-        .map_err(|_| CompileError::new(ErrorCode::InvalidInvariant, "invalid range", Some(line)))?;
-
+        .map_err(|_| number_error(kind, line_no, column))?;
     if !value.is_finite() {
-        return Err(CompileError::new(
-            ErrorCode::InvalidInvariant,
-            "invalid range",
-            Some(line),
-        ));
+        return Err(number_error(kind, line_no, column));
     }
 
     if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
         return Ok(Number::from(value as i64));
     }
 
-    Number::from_f64(value)
-        .ok_or_else(|| CompileError::new(ErrorCode::InvalidInvariant, "invalid range", Some(line)))
+    Number::from_f64(value).ok_or_else(|| number_error(kind, line_no, column))
 }
 
-fn parse_section_header(line: &str) -> Option<String> {
-    let (left, right) = line.split_once(':')?;
-    if left.trim() != "section" {
-        return None;
-    }
-    let name = right.trim();
-    if !is_identifier(name) {
-        return None;
-    }
-    Some(name.to_string())
+fn number_error(kind: ErrorKind, line_no: usize, column: usize) -> CompileError {
+    CompileError::new(kind, "invalid number", line_no, Some(column))
 }
 
-fn parse_key_value(line: &str) -> Option<(String, String)> {
-    let (left, right) = line.split_once(':')?;
-    let key = left.trim();
-    let value = right.trim();
-    if !is_identifier(key) || !is_identifier(value) {
-        return None;
+fn lex_expression(text: &str, line_no: usize, start_column: usize) -> Result<Vec<ExprToken>> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut index = 0usize;
+    let mut column = start_column;
+    let mut tokens = Vec::new();
+
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch.is_whitespace() {
+            index += 1;
+            column += 1;
+            continue;
+        }
+
+        if is_ident_start(ch) {
+            let start = index;
+            let start_column = column;
+            index += 1;
+            column += 1;
+            while index < chars.len() && is_ident_continue(chars[index]) {
+                index += 1;
+                column += 1;
+            }
+            tokens.push(ExprToken {
+                kind: ExprTokenKind::Ident(chars[start..index].iter().collect()),
+                column: start_column,
+            });
+            continue;
+        }
+
+        if ch.is_ascii_digit() {
+            let start = index;
+            let start_column = column;
+            let end = consume_expr_number(&chars, index)
+                .ok_or_else(|| invalid_formula(line_no, Some(start_column)))?;
+            index = end;
+            column += end - start;
+            tokens.push(ExprToken {
+                kind: ExprTokenKind::Number(chars[start..end].iter().collect()),
+                column: start_column,
+            });
+            continue;
+        }
+
+        let kind = match ch {
+            '+' => ExprTokenKind::Plus,
+            '-' => ExprTokenKind::Minus,
+            '*' => ExprTokenKind::Mul,
+            '/' => ExprTokenKind::Div,
+            '(' => ExprTokenKind::LParen,
+            ')' => ExprTokenKind::RParen,
+            _ => return Err(invalid_formula(line_no, Some(column))),
+        };
+        tokens.push(ExprToken { kind, column });
+        index += 1;
+        column += 1;
     }
-    Some((key.to_string(), value.to_string()))
+
+    Ok(tokens)
 }
 
-fn parse_formula(line: &str) -> Option<(String, String)> {
-    let (left, right) = line.split_once('=')?;
-    let lhs = left.trim();
-    if !is_identifier(lhs) {
-        return None;
+fn consume_expr_number(chars: &[char], start: usize) -> Option<usize> {
+    let mut index = start;
+    while index < chars.len() && chars[index].is_ascii_digit() {
+        index += 1;
     }
-    Some((lhs.to_string(), right.trim().to_string()))
+
+    if index < chars.len() && chars[index] == '.' {
+        index += 1;
+        let frac_start = index;
+        while index < chars.len() && chars[index].is_ascii_digit() {
+            index += 1;
+        }
+        if index == frac_start {
+            return None;
+        }
+    }
+
+    if index < chars.len() && matches!(chars[index], 'e' | 'E') {
+        index += 1;
+        if index < chars.len() && matches!(chars[index], '+' | '-') {
+            index += 1;
+        }
+        let exp_start = index;
+        while index < chars.len() && chars[index].is_ascii_digit() {
+            index += 1;
+        }
+        if index == exp_start {
+            return None;
+        }
+    }
+
+    Some(index)
 }
 
-fn parse_invariant(line: &str) -> Option<(String, String, String)> {
-    let mut cursor = 0usize;
-    let field = take_identifier(line, &mut cursor)?;
-    skip_ws(line, &mut cursor);
-    if !consume_word(line, &mut cursor, "in") {
-        return None;
-    }
-    skip_ws(line, &mut cursor);
-    if !consume_char(line, &mut cursor, '[') {
-        return None;
-    }
-
-    let body = &line[cursor..];
-    let comma_pos = body.find(',')?;
-    let min = body[..comma_pos].trim().to_string();
-    let after_comma = &body[comma_pos + 1..];
-    let close_pos = after_comma.find(']')?;
-    let max = after_comma[..close_pos].trim().to_string();
-
-    if after_comma[close_pos + 1..].trim().is_empty() {
-        Some((field, min, max))
-    } else {
-        None
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExprToken {
+    kind: ExprTokenKind,
+    column: usize,
 }
 
-fn parse_pipeline(line: &str) -> Option<String> {
-    let mut parts = line.split_whitespace();
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some("op"), Some(name), None) if is_identifier(name) => Some(name.to_string()),
-        _ => None,
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExprTokenKind {
+    Ident(String),
+    Number(String),
+    Plus,
+    Minus,
+    Mul,
+    Div,
+    LParen,
+    RParen,
+}
+
+struct ExprParser<'a> {
+    tokens: &'a [ExprToken],
+    pos: usize,
+    line_no: usize,
+}
+
+impl<'a> ExprParser<'a> {
+    fn parse_additive(&mut self) -> Result<Expr> {
+        let mut expr = self.parse_multiplicative()?;
+        while let Some(op) = self.peek_binary_operator() {
+            if !matches!(op, BinaryOperator::Add | BinaryOperator::Sub) {
+                break;
+            }
+            self.pos += 1;
+            let right = self.parse_multiplicative()?;
+            expr = Expr::Binary {
+                op,
+                left: Box::new(expr),
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_multiplicative(&mut self) -> Result<Expr> {
+        let mut expr = self.parse_primary()?;
+        while let Some(op) = self.peek_binary_operator() {
+            if !matches!(op, BinaryOperator::Mul | BinaryOperator::Div) {
+                break;
+            }
+            self.pos += 1;
+            let right = self.parse_primary()?;
+            expr = Expr::Binary {
+                op,
+                left: Box::new(expr),
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_primary(&mut self) -> Result<Expr> {
+        let token = self
+            .tokens
+            .get(self.pos)
+            .ok_or_else(|| invalid_formula(self.line_no, None))?
+            .clone();
+
+        match token.kind {
+            ExprTokenKind::Ident(name) => {
+                self.pos += 1;
+                Ok(Expr::Variable(name))
+            }
+            ExprTokenKind::Number(text) => {
+                self.pos += 1;
+                Ok(Expr::Number(parse_number_literal(
+                    &text,
+                    self.line_no,
+                    token.column,
+                    ErrorKind::InvalidFormula,
+                )?))
+            }
+            ExprTokenKind::LParen => {
+                self.pos += 1;
+                let inner = self.parse_additive()?;
+                match self.tokens.get(self.pos) {
+                    Some(ExprToken {
+                        kind: ExprTokenKind::RParen,
+                        ..
+                    }) => {
+                        self.pos += 1;
+                        Ok(Expr::Paren(Box::new(inner)))
+                    }
+                    Some(token) => Err(invalid_formula(self.line_no, Some(token.column))),
+                    None => Err(invalid_formula(self.line_no, Some(token.column + 1))),
+                }
+            }
+            _ => Err(invalid_formula(self.line_no, Some(token.column))),
+        }
+    }
+
+    fn peek_binary_operator(&self) -> Option<BinaryOperator> {
+        match self.tokens.get(self.pos).map(|token| &token.kind) {
+            Some(ExprTokenKind::Plus) => Some(BinaryOperator::Add),
+            Some(ExprTokenKind::Minus) => Some(BinaryOperator::Sub),
+            Some(ExprTokenKind::Mul) => Some(BinaryOperator::Mul),
+            Some(ExprTokenKind::Div) => Some(BinaryOperator::Div),
+            _ => None,
+        }
     }
 }
 
@@ -257,296 +478,62 @@ fn consume_char(line: &str, cursor: &mut usize, expected: char) -> bool {
     }
 }
 
-fn is_number_syntax(raw: &str) -> bool {
-    let chars: Vec<char> = raw.chars().collect();
-    if chars.is_empty() {
-        return false;
+fn take_number_literal(line: &str, cursor: &mut usize) -> Option<String> {
+    let start = *cursor;
+    let mut index = *cursor;
+
+    if matches!(line[index..].chars().next(), Some('+') | Some('-')) {
+        index += line[index..].chars().next()?.len_utf8();
     }
 
-    let mut index = 0usize;
-    if matches!(chars.get(index), Some('+') | Some('-')) {
-        index += 1;
-    }
-
-    let digit_start = index;
-    while matches!(chars.get(index), Some(ch) if ch.is_ascii_digit()) {
-        index += 1;
-    }
-    if index == digit_start {
-        return false;
-    }
-
-    if matches!(chars.get(index), Some('.')) {
-        index += 1;
-        let frac_start = index;
-        while matches!(chars.get(index), Some(ch) if ch.is_ascii_digit()) {
-            index += 1;
-        }
-        if index == frac_start {
-            return false;
-        }
-    }
-
-    if matches!(chars.get(index), Some('e') | Some('E')) {
-        index += 1;
-        if matches!(chars.get(index), Some('+') | Some('-')) {
-            index += 1;
-        }
-        let exp_start = index;
-        while matches!(chars.get(index), Some(ch) if ch.is_ascii_digit()) {
-            index += 1;
-        }
-        if index == exp_start {
-            return false;
-        }
-    }
-
-    index == chars.len()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ExprTokenKind {
-    Ident(String),
-    Number(String),
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    Percent,
-    Caret,
-    LParen,
-    RParen,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ExprToken {
-    kind: ExprTokenKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExprTokenClass {
-    Ident,
-    Number,
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    Percent,
-    Caret,
-    LParen,
-    RParen,
-}
-
-struct ExprParser<'a> {
-    tokens: &'a [ExprToken],
-    pos: usize,
-    line: usize,
-    allowed_variables: &'a [&'a str],
-}
-
-impl<'a> ExprParser<'a> {
-    fn parse_additive(&mut self) -> Result<()> {
-        self.parse_multiplicative()?;
-        while self.consume_class(ExprTokenClass::Plus) || self.consume_class(ExprTokenClass::Minus)
-        {
-            self.parse_multiplicative()?;
-        }
-        Ok(())
-    }
-
-    fn parse_multiplicative(&mut self) -> Result<()> {
-        self.parse_unary()?;
-        while self.consume_class(ExprTokenClass::Star)
-            || self.consume_class(ExprTokenClass::Slash)
-            || self.consume_class(ExprTokenClass::Percent)
-        {
-            self.parse_unary()?;
-        }
-        Ok(())
-    }
-
-    fn parse_unary(&mut self) -> Result<()> {
-        while self.consume_class(ExprTokenClass::Plus) || self.consume_class(ExprTokenClass::Minus)
-        {
-        }
-        self.parse_power()
-    }
-
-    fn parse_power(&mut self) -> Result<()> {
-        self.parse_primary()?;
-        if self.consume_class(ExprTokenClass::Caret) {
-            self.parse_unary()?;
-        }
-        Ok(())
-    }
-
-    fn parse_primary(&mut self) -> Result<()> {
-        match self.peek_kind() {
-            Some(ExprTokenKind::Ident(name)) => {
-                let name = name.clone();
-                self.pos += 1;
-                if !self.allowed_variables.contains(&name.as_str()) {
-                    return Err(CompileError::new(
-                        ErrorCode::UnknownVariable,
-                        format!("variable not allowed: {name}"),
-                        Some(self.line),
-                    ));
-                }
-                Ok(())
-            }
-            Some(ExprTokenKind::Number(_)) => {
-                self.pos += 1;
-                Ok(())
-            }
-            Some(ExprTokenKind::LParen) => {
-                self.pos += 1;
-                self.parse_additive()?;
-                match self.peek_kind() {
-                    Some(ExprTokenKind::RParen) => {
-                        self.pos += 1;
-                        Ok(())
-                    }
-                    _ => Err(CompileError::new(
-                        ErrorCode::InvalidFormula,
-                        "malformed expression",
-                        Some(self.line),
-                    )),
-                }
-            }
-            _ => Err(CompileError::new(
-                ErrorCode::InvalidFormula,
-                "malformed expression",
-                Some(self.line),
-            )),
-        }
-    }
-
-    fn consume_class(&mut self, class: ExprTokenClass) -> bool {
-        if self.peek_class() == Some(class) {
-            self.pos += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn peek_class(&self) -> Option<ExprTokenClass> {
-        self.peek_kind().map(classify_token)
-    }
-
-    fn peek_kind(&self) -> Option<&ExprTokenKind> {
-        self.tokens.get(self.pos).map(|token| &token.kind)
-    }
-}
-
-fn classify_token(kind: &ExprTokenKind) -> ExprTokenClass {
-    match kind {
-        ExprTokenKind::Ident(_) => ExprTokenClass::Ident,
-        ExprTokenKind::Number(_) => ExprTokenClass::Number,
-        ExprTokenKind::Plus => ExprTokenClass::Plus,
-        ExprTokenKind::Minus => ExprTokenClass::Minus,
-        ExprTokenKind::Star => ExprTokenClass::Star,
-        ExprTokenKind::Slash => ExprTokenClass::Slash,
-        ExprTokenKind::Percent => ExprTokenClass::Percent,
-        ExprTokenKind::Caret => ExprTokenClass::Caret,
-        ExprTokenKind::LParen => ExprTokenClass::LParen,
-        ExprTokenKind::RParen => ExprTokenClass::RParen,
-    }
-}
-
-fn lex_expression(expr: &str, line: usize) -> Result<Vec<ExprToken>> {
-    let chars: Vec<char> = expr.chars().collect();
-    let mut index = 0usize;
-    let mut tokens = Vec::new();
-
-    while index < chars.len() {
-        let ch = chars[index];
-        if ch.is_whitespace() {
-            index += 1;
-            continue;
-        }
-
-        if is_ident_start(ch) {
-            let start = index;
-            index += 1;
-            while index < chars.len() && is_ident_continue(chars[index]) {
-                index += 1;
-            }
-            tokens.push(ExprToken {
-                kind: ExprTokenKind::Ident(chars[start..index].iter().collect()),
-            });
-            continue;
-        }
-
+    let mut digit_count = 0usize;
+    while let Some(ch) = line[index..].chars().next() {
         if ch.is_ascii_digit() {
-            let start = index;
-            index = consume_expr_number(&chars, index).ok_or_else(|| {
-                CompileError::new(
-                    ErrorCode::InvalidFormula,
-                    "malformed expression",
-                    Some(line),
-                )
-            })?;
-            tokens.push(ExprToken {
-                kind: ExprTokenKind::Number(chars[start..index].iter().collect()),
-            });
-            continue;
+            index += ch.len_utf8();
+            digit_count += 1;
+        } else {
+            break;
         }
+    }
 
-        let kind = match ch {
-            '+' => ExprTokenKind::Plus,
-            '-' => ExprTokenKind::Minus,
-            '*' => ExprTokenKind::Star,
-            '/' => ExprTokenKind::Slash,
-            '%' => ExprTokenKind::Percent,
-            '^' => ExprTokenKind::Caret,
-            '(' => ExprTokenKind::LParen,
-            ')' => ExprTokenKind::RParen,
-            _ => {
-                return Err(CompileError::new(
-                    ErrorCode::InvalidFormula,
-                    "malformed expression",
-                    Some(line),
-                ));
+    if digit_count == 0 {
+        return None;
+    }
+
+    if matches!(line[index..].chars().next(), Some('.')) {
+        index += 1;
+        let mut frac_digits = 0usize;
+        while let Some(ch) = line[index..].chars().next() {
+            if ch.is_ascii_digit() {
+                index += ch.len_utf8();
+                frac_digits += 1;
+            } else {
+                break;
             }
-        };
-        tokens.push(ExprToken { kind });
-        index += 1;
-    }
-
-    Ok(tokens)
-}
-
-fn consume_expr_number(chars: &[char], start: usize) -> Option<usize> {
-    let mut index = start;
-    while index < chars.len() && chars[index].is_ascii_digit() {
-        index += 1;
-    }
-
-    if index < chars.len() && chars[index] == '.' {
-        index += 1;
-        let frac_start = index;
-        while index < chars.len() && chars[index].is_ascii_digit() {
-            index += 1;
         }
-        if index == frac_start {
+        if frac_digits == 0 {
             return None;
         }
     }
 
-    if index < chars.len() && matches!(chars[index], 'e' | 'E') {
+    if matches!(line[index..].chars().next(), Some('e') | Some('E')) {
         index += 1;
-        if index < chars.len() && matches!(chars[index], '+' | '-') {
+        if matches!(line[index..].chars().next(), Some('+') | Some('-')) {
             index += 1;
         }
         let exp_start = index;
-        while index < chars.len() && chars[index].is_ascii_digit() {
-            index += 1;
+        while let Some(ch) = line[index..].chars().next() {
+            if ch.is_ascii_digit() {
+                index += ch.len_utf8();
+            } else {
+                break;
+            }
         }
         if index == exp_start {
             return None;
         }
     }
 
-    Some(index)
+    *cursor = index;
+    Some(line[start..index].to_string())
 }
