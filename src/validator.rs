@@ -45,7 +45,11 @@ pub fn validate_document(document: DocumentAst) -> Result<ValidatedDocument> {
 }
 
 fn ensure_required_sections(document: &DocumentAst) -> Result<()> {
-    if !document.sections.iter().any(|section| section.name == "meta") {
+    if !document
+        .sections
+        .iter()
+        .any(|section| section.name == "meta")
+    {
         return Err(CompileError::new(
             ErrorKind::MissingMeta,
             "meta section required",

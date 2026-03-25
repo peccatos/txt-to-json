@@ -3,12 +3,14 @@
 `compile <path>` - читает `.eva` и пишет результат в `./вывод.json`
 `validate <path>` - только проверяет вход, ничего не пишет
 `print-ast <path>` - печатает AST в JSON в stdout
+`ui` - открывает интерактивное меню в терминале
 
 Примеры:
 
 `cargo run -- compile .\example.eva`
 `cargo run -- validate .\example.eva`
 `cargo run -- print-ast .\example.eva`
+`cargo run -- ui`
 
 # txt-to-json
 
@@ -58,6 +60,14 @@ Prints the parsed AST as deterministic JSON.
 
 ```bash
 cargo run -- print-ast example.eva
+```
+
+#### Terminal UI
+
+Opens the interactive terminal menu.
+
+```bash
+cargo run -- ui
 ```
 
 ### Global Flags
@@ -259,6 +269,7 @@ cargo test
 - `src/validator.rs` - strict validation rules;
 - `src/builder.rs` - final JSON contract builder;
 - `src/error.rs` - typed error model.
+- `examples/` - checked-in `.eva` sample inputs.
 
 ## Русский
 
@@ -304,6 +315,14 @@ cargo run -- validate example.eva
 
 ```bash
 cargo run -- print-ast example.eva
+```
+
+#### Терминальный UI
+
+Открывает интерактивное меню в терминале.
+
+```bash
+cargo run -- ui
 ```
 
 ### Глобальные флаги
@@ -505,3 +524,4 @@ cargo test
 - `src/validator.rs` - строгие правила валидации;
 - `src/builder.rs` - сборщик итогового JSON-контракта;
 - `src/error.rs` - типизированная модель ошибок.
+- `examples/` - проверенные `.eva` примеры входных файлов.
