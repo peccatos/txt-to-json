@@ -60,6 +60,13 @@ Prints the parsed AST as deterministic JSON.
 cargo run -- print-ast example.eva
 ```
 
+### Global Flags
+
+```bash
+cargo run -- --help
+cargo run -- --version
+```
+
 ### DSL Format
 
 Each file is split into sections. A section starts with `section: IDENT` and continues until the next section header or end of file.
@@ -297,6 +304,13 @@ cargo run -- validate example.eva
 
 ```bash
 cargo run -- print-ast example.eva
+```
+
+### Глобальные флаги
+
+```bash
+cargo run -- --help
+cargo run -- --version
 ```
 
 ### Формат DSL

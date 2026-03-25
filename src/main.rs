@@ -12,12 +12,32 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_OUTPUT_PATH: &str = "вывод.json";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const USAGE: &str = "\
+txt-to-json - EVA DSL compiler
+
+Usage:
+  txt-to-json <command> <path>
+  txt-to-json --help
+  txt-to-json --version
+
+Commands:
+  compile <path>     Compile DSL and write ./вывод.json
+  validate <path>    Parse and validate only
+  print-ast <path>   Print AST as JSON
+
+Flags:
+  -h, --help         Show this help
+  -V, --version      Print version
+";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliCommand {
     Compile { input: PathBuf },
     Validate { input: PathBuf },
     PrintAst { input: PathBuf },
+    Help,
+    Version,
 }
 
 pub fn compile_to_contract(input: &str) -> Result<Contract> {
@@ -53,6 +73,14 @@ fn main() {
 
 fn run_cli() -> Result<()> {
     match parse_args(env::args_os().skip(1))? {
+        CliCommand::Help => {
+            println!("{USAGE}");
+            Ok(())
+        }
+        CliCommand::Version => {
+            println!("txt-to-json {VERSION}");
+            Ok(())
+        }
         CliCommand::Compile { input } => {
             let json = compile_file_to_json(&input)?;
             fs::write(DEFAULT_OUTPUT_PATH, json).map_err(CompileError::from)?;
@@ -80,12 +108,28 @@ fn run_cli() -> Result<()> {
 
 fn parse_args(mut args: impl Iterator<Item = std::ffi::OsString>) -> Result<CliCommand> {
     let Some(command) = args.next() else {
-        return Err(cli_syntax_error("expected a subcommand"));
+        return Ok(CliCommand::Help);
     };
 
     let Some(command) = command.to_str() else {
         return Err(cli_syntax_error("subcommand must be valid UTF-8"));
     };
+
+    match command {
+        "-h" | "--help" | "help" => {
+            if args.next().is_some() {
+                return Err(cli_syntax_error("unexpected extra arguments"));
+            }
+            return Ok(CliCommand::Help);
+        }
+        "-V" | "--version" | "version" => {
+            if args.next().is_some() {
+                return Err(cli_syntax_error("unexpected extra arguments"));
+            }
+            return Ok(CliCommand::Version);
+        }
+        _ => {}
+    }
 
     let Some(input) = args.next() else {
         return Err(cli_syntax_error("expected an input path"));
